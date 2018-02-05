@@ -16,6 +16,10 @@ The Angular dist files are located here: `public/epimap/dist`.
 
 Open `out/global.html`
 
+## Project reflection
+
+Epimaps project reflection (PDF): https://goo.gl/TgwGYK
+
 ## Acknolwedgments
 
 - ExpressJS for building the API
