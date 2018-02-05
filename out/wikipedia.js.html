@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: wikipedia.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: wikipedia.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>const https = require('https');
+const tree = require('../data_structs/tree');
+const cheerio = require('cheerio');
+const request = require('request');
+
+/**
+ * @description This take a URL that fetches JSON data and
+ * returns the string as is. We don't parse it here because
+ * the JSON data may need modifications.
+ * @param url
+ * @return {string} JSON string.
+ */
+function httpsJson(url) {
+    return new Promise(function promiseHandler(resolve, reject) {
+        https.get(url, httpsJson).end();
+
+        function httpsJson(response) {
+            var jsonResponse = [];
+            var jsonObject;
+
+            response.on('data', function getJson(data) {
+                jsonResponse.push(data);
+            }).on('end', function returnJson() {
+                if (jsonResponse.length === 0)
+                    reject('No data was sent back.');
+                else
+                    resolve(jsonResponse.join());
+            });
+        }
+    });
+}
+
+// httpsJson("https://en.wikipedia.org/w/api.php?action=query&amp;titles=Al-Farabi&amp;prop=images&amp;format=json")
+//     .then(
+//         function(json) {
+//             console.log(json);
+//             var pageId = parseInt(Object.keys(json['query']['pages'])[0]);
+//         },
+//         function(error) {
+//             console.error(error);
+//         }
+//     );
+
+/**
+ * @description This take a URL that fetches HTML data and
+ * returns the string as is.
+ * @param url
+ * @return {string} HTML string
+ */
+function httpsHtml(url) {
+    return new Promise(function promiseHandler(resolve, reject) {
+        https.get(url, httpsHtml).end();
+
+        function httpsHtml(response) {
+            var htmlResponse = [];
+
+            response.on('data', function getHtml(data) {
+                htmlResponse.push(data);
+            }).on('end', function returnHtml() {
+                resolve(htmlResponse.join());
+            });
+        }
+    });
+}
+
+// httpsHtml('https://google.com')
+//     .then(function(html) {
+//         $ = cheerio.load(html);
+//
+//         console.log($('body'));
+//         console.log(html);
+//     });
+
+/**
+ * @description This takes in a Wikipedia URL and retrieves
+ * its article id, or pageId as it's sent back from Wikipedia's
+ * servers.
+ * @param {string} wikipediaUrl
+ * @return {Promise} A promise with the article id. If the page
+ * doesn't exist, or the URL is improperly formed (e.g. illegal
+ * symbols), rejects.
+ */
+function getArticleId(wikipediaUrl) {
+    var wikipediaTitle = wikipediaUrl.split('/').slice(-1).pop();
+    var url = "https://en.wikipedia.org/w/api.php?action=parse&amp;prop=revid&amp;format=json&amp;page=" + wikipediaTitle;
+
+    return new Promise(function(resolve, reject) {
+        https.get(url, getArticleId).end();
+
+        function getArticleId(res) {
+            var jsonResponse = '';
+            res.setEncoding('utf8');
+            res.on('data', function setJSON(data) {
+                jsonResponse += data;
+            }).on('end', function processJSON() {
+                var jsonObject = JSON.parse(jsonResponse);
+
+                if (!('parse' in jsonObject))
+                    reject('There was an error processing this. The article might not exist, or the request URL is improper.');
+                else
+                    resolve(jsonObject['parse']['pageid']);
+            });
+        }
+    });
+}
+
+// getArticleId("https://en.wikipedia.org/wiki/Wikipedia")
+// getArticleId("https://en.wikipedia.org/wiki/Wipedia")
+// getArticleId("https://en.wikipedia.org/w/api.php?format=json&amp;action=query&amp;prop=extracts&amp;exintro=&amp;explaintext=&amp;titles=") // "https://en.wikipedia.org/wiki/Wipedia"
+//     .then(function(data) {
+//         console.log(data);
+//     }, function(error) {
+//         console.error(error);
+//     });
+
+/**
+ * @description This extracts a Wikipedia article's summary.
+ * By "summary", we refer to the paragraphs before the content
+ * navigation box at the top of the article.
+ * @param wikipediaUrl
+ * @return {Promise} A promise of the summary if valid, rejects
+ * if request invalid or page doesn't exist.
+ */
+function getArticleSummary(wikipediaUrl) {
+    var wikipediaTitle = wikipediaUrl.split('/').slice(-1).pop();
+    var url = "https://en.wikipedia.org/w/api.php?format=json&amp;action=query&amp;prop=extracts&amp;exintro=&amp;explaintext=&amp;titles=" + wikipediaTitle;
+
+    return new Promise(function(resolve, reject) {
+        httpsJson(url).then(function (json) {
+            var jsonObject = JSON.parse(json);
+
+            if (!('query' in jsonObject))
+                reject('Invalid request');
+            else if ('-1' in jsonObject['query']['pages'])
+                reject('Page doesn\'t exist');
+            else {
+                try {
+                    const pageid = Object.getOwnPropertyNames(jsonObject['query']['pages'])[0];
+                    resolve(jsonObject['query']['pages'][pageid]['extract']);
+                } catch (error) {
+                    //  something wrong with extracting the pageid property
+                    getArticleId(wikipediaUrl).then(function (articleId) {
+                        resolve(jsonObject['query']['pages'][articleId.toString()]['extract'])
+                    }); // don't specify error here because they should have been caught above
+                }
+            }
+        });
+    });
+}
+
+// getArticleSummary("https://en.wikipedia.org/wiki/api.php?format=json&amp;action=query&amp;prop=extracts&amp;exintro=&amp;explaintext=&amp;titles=")
+// getArticleSummary("https://en.wikipedia.org/wiki/Wikipediaasdfewhasd")
+// getArticleSummary("https://en.wikipedia.org/wiki/Wikipedia")
+//     .then(function(data) {
+//         console.log(data);
+//     }, function(error) {
+//         console.error(error);
+//     });
+
+/**
+ * @description Extract an article's images give its
+ * Wikipedia URL.
+ * @todo There is one special case that should be considered,
+ * the no images case, but because this is highly unlikely,
+ * finding an article to actually test this on is hard (and
+ * we need to have a look at the JSON structure to know what
+ * comes back and process it). In any case, should be easy
+ * enough to add.
+ * @param wikipediaUrl
+ * @return {Promise} Either returns an array of the following:
+ * { title: string, url?: string, error?: string}
+ * or passes errors to the error handling facilities of
+ * getArticleId, since they're likely to be the same as
+ * well.
+ */
+function getArticleImages(wikipediaUrl) {
+    var wikipediaTitle = wikipediaUrl.split('/').slice(-1).pop();
+    var url = "https://en.wikipedia.org/w/api.php?action=query&amp;prop=images&amp;format=json&amp;titles=" + wikipediaTitle;
+
+    return new Promise(function(resolve, reject) {
+        httpsJson(url).then(function(json) {
+            var jsonObject = JSON.parse(json);
+            var allImages = [];
+            var allPromises = [];
+
+            getArticleId(wikipediaUrl).then(function(articleId) {
+                jsonObject['query']['pages'][articleId.toString()]['images'].forEach(function(image, index) {
+
+                    //  get imageurl and title, add to array and resolve
+                    var getCurrentImagePromise = getWikimediaImageUrl(image.title).then(function(imageUrl) {
+                        allImages.push({ 'title': image.title, 'url': imageUrl });
+                    }, function(error) {
+                        allImages.push({ 'title': image.title, 'error': error });
+                    });
+
+                    allPromises.push(getCurrentImagePromise);
+                });
+
+                Promise.all(allPromises).then(function() {
+                    resolve(allImages);
+                }, function(error) {
+                    resolve(allImages); //  the array is still sent back, complete with errors and all
+                });
+
+            }, function(error) {
+                reject(error);
+            });
+        });
+    });
+}
+// getArticleImages("https://en.wikipedia.org/wiki/Al-Farabi")
+// getArticleImages("https://en.wikipedia.org/wiki/Al-Faasdhfjaksdlrabi")
+// getArticleImages("http://google.com") //handled in routes
+// getArticleImages("https://en.wikipedia.org/*hjaslwhoasd-asdf")
+// getArticleImages("https://en.wikipedia.org/wiki/Outline_of_computer_science")
+//     .then(function(images) {
+//         console.log(images);
+//     }, function(error) {
+//         console.error(error);
+//     });
+
+/**
+ * @description This extracts the Wikimedia image URL based
+ * on the imageTitle, or this property
+ * ['query']['pages'][pageid]['images'][0]['title']
+ * when grabbing images on a page.
+ * @see See getArticleImages.
+ * @param imageTitle {string} Looks something like this
+ * File:Bodlein_Library_MS._Arab.d.84_roll332_frame1.jpg
+ * @return {Promise} A promise of the image URL if valid,
+ * rejects if the image doesn't exist, the title is invalid,
+ * or perhaps the image does exist but can't be processed by
+ * Wikipedia's API. (https://en.wikipedia.org/w/api.php?action=query&amp;prop=imageinfo&amp;iiprop=url&amp;format=json&amp;titles=)
+ */
+function getWikimediaImageUrl(imageTitle) {
+    var url = "https://en.wikipedia.org/w/api.php?action=query&amp;prop=imageinfo&amp;iiprop=url&amp;format=json&amp;titles=" + imageTitle;
+
+    return new Promise(function(resolve, reject) {
+        httpsJson(url).then(function(json) {
+            var jsonObject = JSON.parse(json);
+
+            if (!jsonObject['query']['pages'].hasOwnProperty('-1'))
+                reject('Irregular image format');
+            else if (!jsonObject['query']['pages']['-1'].hasOwnProperty('imageinfo'))
+                reject('Either invalid image title or image doesn\'t exist.');
+            else
+                resolve(jsonObject['query']['pages']['-1']['imageinfo'][0]['url']);
+        });
+    });
+}
+
+// getWikimediaImageUrl("File:Bodlein_Library_MS._Arab.d.84_roll332_frame1.jpg")
+// getWikimediaImageUrl("File:Bodlein_Library_MS._Arab.d..jpg")
+// getWikimediaImageUrl("asdfhjlkahj)asdfawasdhwuhaklsdf")
+//     .then(function(url) {
+//         console.log(url);
+//     }, function(error) {
+//         console.error(error);
+//     });
+
+/**
+ * @description Extracts thumbnail of Wikipedia article.
+ * @param {string} wikipediaUrl
+ * @return {Promise} Returns Wikimedia thumbnail URL,
+ * rejects URL improper, article non-existent or perhaps
+ * the page itself just doesn't have thumbnails.
+ */
+function getArticleThumbnail(wikipediaUrl) {
+    var wikipediaTitle = wikipediaUrl.split('/').slice(-1).pop();
+    var url = "https://en.wikipedia.org/w/api.php?action=query&amp;prop=pageimages&amp;format=json&amp;titles=" + wikipediaTitle;
+
+    return new Promise(function(resolve, reject) {
+        httpsJson(url).then(function(json) {
+            var jsonObject = JSON.parse(json);
+
+            if (jsonObject['query']['pages'].hasOwnProperty('-1'))
+                reject('Probably improper URL or non-existent article');
+            else {
+                getArticleId(wikipediaUrl).then(function(articleId) {
+                    if (jsonObject['query']['pages'][articleId.toString()].hasOwnProperty('thumbnail'))
+                        resolve(jsonObject['query']['pages'][articleId.toString()]['thumbnail']['source']);
+                    else
+                        reject('Page doesn\'t have thumbnail.');
+                });
+            }
+        });
+    });
+}
+
+// getArticleThumbnail("https://en.wikipedia.org/wiki/Outline_of_computer_science")
+// getArticleThumbnail("https://en.wikipedia.org/wiki/Al-Farabi")
+// getArticleThumbnail("https://en.wikipedia.org/wiki/Anaheim_Ducks")
+//     .then(function(thumbnail) {
+//         console.log(thumbnail);
+//     }, function(error) {
+//         console.error(error);
+//     });
+
+/**
+ * @description Checks if Wikipedia URL is valid (if article
+ * exists).
+ * @param {string} wikipediaUrl
+ * @return {Promise} Resolves to true if status code is 200,
+ * false if status code is 404.
+ *
+ * This also takes into account redirects. How Wikipedia handles
+ * redirects is that it redirects invalid queries to a page, and
+ * it's only at the end of the redirects that a 404 response code
+ * is sent back. Of course, if the redirect is indeed valid, then
+ * a 200 status code is sent back normally.
+ */
+function articleExists(wikipediaUrl) {
+    return new Promise(function(resolve, reject) {
+        request(wikipediaUrl, getArticle).end();
+
+        function getArticle(error, res) {
+            console.log(res.statusCode);
+            if (res.statusCode === 200)
+                resolve(true);
+            else if (res.statusCode === 404)
+                resolve(false);
+        }
+    });
+}
+
+// articleExists("https://en.wikipedia.org/wiki/Outline_of_computer_science")
+// articleExists("https://en.wikipedia.org/wiki/Outline_of_computer_sciencesdf")
+// articleExists("https://en.wikipedia.org/wiki/Great Wallz")
+// articleExists("https://en.wikipedia.org/w/index.php?title=Great_wall")
+// articleExists("https://en.wikipedia.org/wiki/Great Wall")
+//     .then(function(exists) { console.log(exists); });
+
+/**
+ * @description Retrieves the canonical URL based on a query,
+ * if a corresponding Wikipedia page exists.
+ * @param {string} query Similar to a query entered in Wikipedia
+ * search.
+ * @return {Promise} canonicalLink Either a valid canonical link
+ * or an error message.
+ */
+function getCanonicalURL(query) {
+    return new Promise(function(resolve, reject) {
+        request('https://en.wikipedia.org/w/index.php?title=' + query, function (error, response, body) {
+            // console.log(response);
+            if (response.statusCode > 400) {
+                reject('There are no Wikipedia articles corresponding to the search query.');
+            }
+            else {
+                var canonicalTag = body.match('&lt;link rel="canonical" href="https:\/\/en.wikipedia.org\/wiki\/\\w+\"')[0];
+                var canonicalLink = canonicalTag.split('href=')[1].split('"')[1]; // extract href, then get rid of quotes
+                resolve(canonicalLink); // throws error if JSON isn't sent back
+            }
+        });
+    });
+}
+
+// var testQueries = [ 'Anaheim Duck',
+//                     'Anaheim Ducks',
+//                     'Great Wall',
+//                     'Great Wallz',
+//     'iphone'
+// ];
+//
+// testQueries.forEach(function(query, index) {
+//    getCanonicalURL(query).then(function(result) {
+//        console.log(result);
+//    }, function(error) {
+//        console.log(error);
+//    });
+// });
+
+/**
+ * @description This will grab a Wikipedia wiki page and
+ *  extract an array of links from it.
+ *  @param {string} url Valid URL whose HTML we want to process.
+ *  @param {string} selector Valid CSS selector to use to grab links.
+ *  A combination of the link selector 'a' and other selectors
+ *  is recommended.
+ *  @return {Array} a collection of &lt;a> elements, where each
+ *  item has the structure
+ *  { link: string, title?: string }
+ */
+function getWikiLinks(url, selector) {
+    return new Promise(function(resolve, reject) {
+        httpsHtml(url).then(function(html) {
+            $ = cheerio.load(html);
+            var linkNodes = $(selector);
+            var validWikiLinks = [];
+
+            linkNodes.each(function(index, node) {
+                var nodeHref = $(node).attr("href");
+                var nodeTitle = $(node).attr("title");
+
+                if (nodeHref) {
+                    var isAnchor = nodeHref.match("^#[\\w]+$"); // doesn't count external anchors
+                    var isWikiPage = nodeHref.match("^(\\/wiki\\/)([\\w]+)$");
+
+                    if (!isAnchor &amp;&amp; isWikiPage)
+                        validWikiLinks.push({ link: nodeHref, title: nodeTitle });
+                }
+            });
+            resolve(validWikiLinks);
+        });
+    });
+}
+
+// getWikiLinks('https://en.wikipedia.org/wiki/Outline_of_computing', 'a')
+// getWikiLinks("https://en.wikipedia.org/wiki/Information_system", '.navbox a')
+//     .then(function(links) {
+//     console.log(links);
+// });
+
+/**
+ * @description Converts a Wikipedia style navBox at the
+ * bottom of a Wiki page and saves it in a tree structure.
+ * @param {jQuery} navBox A navBox is an Object returned by cheerio's
+ * $('.navbox') function. It's a standard navigation box
+ * that shows the structure of the branch of knowledge
+ * to which the currently viewed Wiki article subject
+ * belongs.
+ * @return {Array} This function returns a Tree representing the
+ * navBox. Each node should have data that contains
+ * { title: link text, link?: href value }. The link is optional
+ * because some elements might simply be headers, and don't
+ * link to any Wiki pages.
+ */
+function getTree(navBox) {
+    var topLevelHeaderNodes = navBox.find('.navbox-title div[id]'); //  this selects the th title link
+    //  we don't do div a (direct child) because if there are no links, it would erroneously skips it
+
+    var allTrees = [];
+
+    //  process top level nodes first (attributes and CSS slightly different, so we can't process in generic method)
+    topLevelHeaderNodes.each(function(headerIndex, headerNode) {    //  this could be slightly misleading because
+        // there's only one top th node processed
+        var headerObject = {
+            text: $(headerNode).text(),
+            href: $(headerNode).children('a').attr('href'),    // $(headerNode).children('a')['_root'][0].
+            // attribs.href
+        };
+
+        var navBoxTree = new tree.Tree();
+        navBoxTree.add(headerObject);
+        allTrees.push(navBoxTree);
+
+        //  build a tree structure mirrored after navbox
+        buildTree($(headerNode), headerObject, true);
+
+        /**
+         *
+         * @param thNode This is the node whose children nodes we grab,
+         * whether those be th or li nodes.
+         *
+         * @param parentTreeNodeData This is the object of the thNode,
+         * we use this in order to add to the tree, since the Tree.add
+         * method depends on the tree node's data for comparison.
+         *
+         * @param isLevelOne Assume that in our tree structure, we label
+         * each level of th by level number: L0 is the top category (e.g.
+         * Edsger Dijkstra), L1 is the next level down (e.g. Main research
+         * areas), Ln (n >= 2) is every level after.
+         *
+         * L0, L1 and Ln require different CSS selectors for selection,
+         * and they will be treated separately as such. (This method
+         * only handles L1 and Ln.)
+         *
+         * @description This method is the core of the getTree method. This
+         * takes the L0 nodes, and parses the DOM tree to return a tree
+         * of all its children descendents (th and li children nodes).
+         *
+         * @return Doesn't return anything. Encapsulated routine manipulates
+         * navBoxTree Tree object.
+         */
+        function buildTree(thNode, parentTreeNodeData, isLevelOne) {
+            var childrenThNodes = (isLevelOne) ?
+                $(thNode).closest('tr').siblings('tr').children('th') : //  level 1 nodes
+                $(thNode).siblings('td').find('> * > * > tr > th');                    //  level n nodes
+
+            //  we process li nodes first (there are two cases: a hybrid th-li structure, or a plain li structure)
+            //  either of which is handled here (no separation is needed)
+            var childrenLiNodes = (isLevelOne) ?
+                $(thNode).closest('tr').siblings('tr').find('li'):  // L1
+                $(thNode).siblings('td').find("li");                // Ln+
+
+            //  train of thought: get all the li nodes and process only the ones that
+            //  belong to the th node directly (compare th node text to the parameter thNode)
+            if (childrenLiNodes.length > 0) {
+                $(childrenLiNodes).each(function(ind, childLiNode) {
+                    if (
+                        //  level one can only have bare li nodes (nodes without th 'parent')
+                    ( isLevelOne &amp;&amp;
+                        $(childLiNode).closest('td').siblings('th').length === 0 &amp;&amp; // doesn't have th's (bare li nodes)
+                        $(childLiNode).closest('tr').siblings('tr').children('th').children('div[id]').text() === $(thNode).text() )
+                    || // L1 --> L0 node
+                    //  level n's li nodes will always have th parent
+                    ( !isLevelOne &amp;&amp;
+                        $(childLiNode).closest('tr').children('th').text() === $(thNode).text() ) // Ln --> L(n-1) node
+                    ) {
+                        var childLiObj = {
+                            text: $(childLiNode).text(),
+                            href: $(childLiNode).children('a').attr('href')
+                        };
+
+                        navBoxTree.add(childLiObj, parentTreeNodeData);
+                    }
+                })
+            }
+
+            //  if there are children th descendents, we add those to the tree
+            if (childrenThNodes.length > 0) {
+                $(childrenThNodes).each(function(ind, childThNode) {
+                    var childThObj = {
+                        text: $(childThNode).text(),
+                        href: $(childThNode).children('a').attr('href'),
+                    };
+
+                    navBoxTree.add(childThObj, parentTreeNodeData);
+
+                    //  we want to see if there are any children th nodes too (recursion magic)
+                    buildTree(childThNode, childThObj, false);
+                });
+            }
+        }
+    });
+
+    return allTrees;
+}
+
+/**
+ * @description This function takes a valid URL, and
+ * attempts to extract epistemic trees from the navBoxes
+ * typically found at the bottom of Wiki pages.
+ *
+ * So far, in the cases I've analyzed, and because of the way
+ * the code is written, there are no cases where I've encountered
+ * errors yet, so reject handlers aren't defined in the promise.
+ * @param {string} url string A valid URL whose HTML we want to
+ * analyze.
+ * @param {Promise} A promise containing returned trees.
+ */
+function getEpiTrees(url) {
+    return new Promise(function(resolve, reject) {
+        httpsHtml(url).then(function(html) {
+            $ = cheerio.load(html);
+            var navBoxes = $('.navbox-title abbr').closest('.navbox'); // abbr is for the V.T.E links
+            var navBoxSubgroups = $('.navbox-title').closest('.navbox-subgroup');
+            var allTrees = [];
+
+            navBoxes.each(function(index, navBoxNode) {
+                //  it shouldn't have nested titles, e.g. "China articles" would be out in Wiki/China
+                if ($(navBoxNode).find('.navbox-title').length === 1) {
+                    allTrees.push(getTree($(navBoxNode)));
+                }
+            });
+
+            navBoxSubgroups.each(function(index, navBoxSubgroupNode) {
+                allTrees.push( getTree( $(navBoxSubgroupNode) ) );
+            });
+
+            //  log to check everything's correct
+            // allTrees.forEach(function(tree, index) { (tree[0]) ? console.log(tree[0].root) : ''; });
+
+            resolve(allTrees);
+        });
+    });
+}
+
+// Test cases
+
+// Case #1: Regular
+// getEpiTrees("https://en.wikipedia.org/wiki/Data_structure")
+
+// Case #2: Regular with nesting and with no children th nodes
+// getEpiTrees("https://en.wikipedia.org/wiki/Edsger_W._Dijkstra")
+
+// Case #2b: Multiple levels of nesting
+// getEpiTrees("https://en.wikipedia.org/wiki/Federal_government_of_the_United_States")
+
+// Case #2c: Even more levels of nesting
+// getEpiTrees("https://en.wikipedia.org/wiki/English_language")
+
+// Case #3a: Complex structure (multiple nested navboxes)
+// getEpiTrees("https://en.wikipedia.org/wiki/China")
+
+// Case #3b: Complex structure example 2 (University)
+// getEpiTrees("https://en.wikipedia.org/wiki/University_of_Texas_at_Austin")
+
+// Case #3c: Complex structure example 3 (Hong Kong)
+// getEpiTrees("https://en.wikipedia.org/wiki/Hong_Kong")
+
+// Case #4: One navbox
+// getEpiTrees("https://en.wikipedia.org/wiki/Outline_of_computing")
+
+// Case #5: No navboxes
+// getEpiTrees("https://en.wikipedia.org/wiki/List_of_members_of_the_Lok_Sabha_1952-2017")
+
+// Case #6: Irregular navboxes (without li)
+// getEpiTrees("https://en.wikipedia.org/wiki/Magnesium")
+//     .then(function(trees) {
+//    console.log(trees);
+// });
+
+// Extra test
+// getEpiTrees("https://en.wikipedia.org/wiki/Anaheim_Ducks")
+//     .then(function(trees) {
+//    console.log(trees);
+// });
+
+
+
+/**
+ * @description This gets the data needed from this Google
+ * Trend API call. There are a maximum of 300 items included
+ * in the API call, each of which comes with a unique ID, which
+ * can be used to make further API calls to fetch each story item,
+ * ~~but I'm settling with just the default list that comes on
+ * page load~~.
+ *
+ * The Google Trends API in question:
+ * https://trends.google.com/trends/api/stories/latest?hl=en-GB&amp;tz=-480&amp;cat=all&amp;fi=15&amp;fs=15&amp;geo=US&amp;ri=300&amp;rs=15&amp;sort=0
+ *
+ * Please note that there's a reason I didn't use the httpsJson
+ * or httpsHtml convenience methods here. For some reason, doing
+ * regex processing on the returned strings proved buggy, so I
+ * had to desugar the convenience methods once again.
+ *
+ * @return {Array} List of story titles.
+ */
+function getTodaysTrends() {
+    var jsonResponse = '';
+    var url = 'https://trends.google.com/trends/api/stories/latest?hl=en-GB&amp;tz=-480&amp;cat=all&amp;fi=15&amp;fs=15&amp;geo=US&amp;ri=300&amp;rs=15&amp;sort=0';
+
+    //  for some reason doing httpsJson doesn't work here, but this does
+    return new Promise(function(resolve, reject) {
+        https.get(url, getTodaysTrends).end();
+
+        function getTodaysTrends(res) {
+            res.setEncoding('utf8');
+            res.on('data', function setJSON(data) {
+                jsonResponse += data;
+            }).on('end', function processJSON() {
+                var strippedJSON = jsonResponse.replace(")]}'", ''); // get rid of trailing )]}'
+                var jsonObject = JSON.parse(strippedJSON);
+
+                var storyTitles = [];
+
+                //  process the ones that come with the /api/stories/latest api call
+                jsonObject["storySummaries"]["trendingStories"].forEach(function getStories (story, index) {
+                    story["entityNames"].forEach(function getStoryTitles (title, index) {
+                        storyTitles.push(title);
+                    });
+                });
+
+                //  fail safe - if the get25Stories method proves buggy, you can revert here.
+                // resolve(storyTitles);
+
+                var allStoryIds = [];
+
+                jsonObject["trendingStoryIds"].forEach(function extendStories (id, index) {
+                    allStoryIds.push(id);
+                });
+
+                //  process the remaining story ids with the /api/stories/summary api calls
+                var allExtendedStoriesPromises = [];
+                const TOTAL_STORIES = 300;
+
+                for (var i = 0; i &lt; TOTAL_STORIES; i += 25) {
+                    var currentPromise = _get25Stories( jsonObject["trendingStoryIds"],
+                                                        allStoryIds,
+                                                        i,
+                                                        i + 25).then(function(allStories) {
+                        allStories.forEach(function(story, id) { storyTitles.push(story); });
+                    });
+
+                    allExtendedStoriesPromises.push(currentPromise);
+                }
+
+                //  when all promises are resolved, return the entire array
+                Promise.all(allExtendedStoriesPromises).then(function(data) { // I just need the "once all promises fulfilled" feature, not the data - nothing was resolved above either
+                    resolve(storyTitles);
+                });
+
+            });
+        }
+    });
+}
+
+/**
+ * @description This processes 25 more stories, and grabs their story names.
+ * Please note that there can be multiple story names under each story. The
+ * Google trends API we're using is this:
+ * https://trends.google.com/trends/api/stories/summary?hl=en-GB&amp;tz=-480&amp;id=US_lnk_W2IRuwAwAABKaM_en,
+ * where there can be multiple ids specified in the URL.
+ *
+ * This is also why we named this very explicitly get **25** stories, because
+ * I believe there is a limit to the URL length, in Chrome it's 2083 characters.
+ * After 40 id params, the server 404 error, and after 50, it becomes a bad request.
+ * 25 seems to be a safe limit.
+ *
+ * If there are any mistakes that arise from this, check for these places:
+ * 1. RegEx /{"featuredStories":\[\],"trendingStories".+/g not sure if this is consistent
+ * 2. URL length
+ * If these two are fine, everything else should be consistent and turn out alright.
+ * @param {Array&lt;string>} jsonObject Should be the trendingStoryIds property of the JSON object
+ * returned from this API:
+ * https://trends.google.com/trends/api/stories/latest.
+ * @param {Array&lt;string>} storyIds An array of story IDs used to form the GET request URL.
+ * @param {number} startIndex Start index of story IDs.
+ * @param {number} endIndex We process up to but NOT including endIndex of story IDs.
+ * @private Only used internally!!
+ */
+function _get25Stories(trendingStoryIds, storyIds, startIndex, endIndex) {
+    return new Promise(function (resolve, reject) {
+        //  form request URL
+        var extendedQueryURLArr = ['https://trends.google.com/trends/api/stories/summary?hl=en-GB&amp;tz=-480'];
+
+        trendingStoryIds.forEach(function extendStories (id, index) {
+            if (index >= startIndex &amp;&amp; index &lt; endIndex)
+                extendedQueryURLArr.push("&amp;id=" + id);
+        });
+
+        var extendedQueryURL = extendedQueryURLArr.join("");
+
+        https.get(extendedQueryURL, getExtendedTrends).end();
+
+        function getExtendedTrends(res) {
+            var allStoryNames = [];
+            var jsonResponse = "";
+
+            res.setEncoding('utf8');
+            res.on('data', function setJSON(data) {
+                jsonResponse += data;
+            }).on('end', function processJSON() {
+                //  returned JSON response is strange - we extract only this portion
+                var strippedJSON = jsonResponse.match(/{"featuredStories":\[\],"trendingStories".+/g)[0];
+                var jsonObject = JSON.parse(strippedJSON);
+
+                //  within each trendingStory, there can be multiple entityNames
+                jsonObject["trendingStories"].forEach(function trendingStories (story, index) {
+                    story.entityNames.forEach(function flattenNames (name, index) {
+                        allStoryNames.push(name);
+                    });
+                });
+
+                resolve(allStoryNames);
+            });
+        }
+    });
+}
+
+// getTodaysTrends().then(function(storyTitles) {
+//     console.log(storyTitles);
+// }, function(error) {
+//     console.error(error);
+// });
+
+/**
+ * @description Validates whether url is of the format
+ * https://en.wikipedia.org/wiki/[articleName].
+ * @param {string} url
+ * @return {boolean}
+ */
+function validWikipediaUrl(url) {
+    // var validUrl = url.match('(https:\\/\\/en\\.wikipedia\\.org\\/wiki\\/)(.+)');
+    var regex = [   new RegExp('(https:\\/\\/en\\.wikipedia\\.org\\/w\\/index.php\\?title=)(.+)'),
+                    new RegExp('(https:\\/\\/en\\.wikipedia\\.org\\/wiki\\/)(.+)')];
+
+    var validUrl = regex[0].test(url) ||
+                    regex[1].test(url);
+
+    return (validUrl) ? true : false;
+}
+
+function validQuery(query) {
+    return query.match(/^[\w\s]+$/g);
+}
+
+module.exports = {
+    getArticleId: getArticleId,
+    getArticleSummary: getArticleSummary,
+    getArticleImages: getArticleImages,
+    getCanonicalURL: getCanonicalURL,
+    getWikimediaImageUrl: getWikimediaImageUrl,
+    getArticleThumbnail: getArticleThumbnail,
+    articleExists: articleExists,
+    getWikiLinks: getWikiLinks,
+    getEpiTrees: getEpiTrees,
+    validWikipediaUrl: validWikipediaUrl,
+    getTodaysTrends: getTodaysTrends,
+    validQuery: validQuery
+};</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#articleExists">articleExists</a></li><li><a href="global.html#getArticleId">getArticleId</a></li><li><a href="global.html#getArticleImages">getArticleImages</a></li><li><a href="global.html#getArticleSummary">getArticleSummary</a></li><li><a href="global.html#getArticleThumbnail">getArticleThumbnail</a></li><li><a href="global.html#getCanonicalURL">getCanonicalURL</a></li><li><a href="global.html#getEpiTrees">getEpiTrees</a></li><li><a href="global.html#getTodaysTrends">getTodaysTrends</a></li><li><a href="global.html#getTree">getTree</a></li><li><a href="global.html#getWikiLinks">getWikiLinks</a></li><li><a href="global.html#getWikimediaImageUrl">getWikimediaImageUrl</a></li><li><a href="global.html#httpsHtml">httpsHtml</a></li><li><a href="global.html#httpsJson">httpsJson</a></li><li><a href="global.html#validWikipediaUrl">validWikipediaUrl</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.5.5</a> on Mon Feb 05 2018 17:39:22 GMT+0800 (HKT)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>
