@@ -2,7 +2,7 @@
 
 ## Demo
 
-
+[![Epimaps-backend-demo](https://img.youtube.com/vi/dgSGFq9sY04/0.jpg)](https://www.youtube.com/watch?v=dgSGFq9sY04)
 
 ## To run
 
@@ -15,6 +15,10 @@ The Angular dist files are located here: `public/epimap/dist`.
 ## Documentation
 
 Open `out/global.html`
+
+## Project reflection
+
+Epimaps project reflection (PDF): https://goo.gl/TgwGYK
 
 ## Acknolwedgments
 
